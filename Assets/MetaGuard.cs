@@ -32,26 +32,29 @@ public class MetaGuard : MonoBehaviour {
     private float x_z_offset = 0.02f;                // idem
                                                     // Height
     private float height;                    // Value to protect. The relative y_corrdinate (later assigned), it is an accurate measurement of user height
-    private List<float> height_noises;       // List containing noise (fixed) values for height depending of the privacy level
                                             // Arm length (wingspan)
     private float arm_length;                // value to protect 
-    private List<float> arm_noises;          // List containing noise (fixed) values for wingspan depending of the privacy level
     private float height_to_wingspan_ratio = 1.04f;  // convertion ratio from height to wingspan
                                                     // Depth
     private float fitness_threshold = 0.25f;
     private float squat_depth;                // value to protect 
-    private List<float> squat_depth_noises;   // List containing noise (fixed) values for squat depth depending of the privacy level
                                              // Interpupillary distance (IPD)
     private float ipd;                // value to protect 
-    private List<float> ipd_noises;   // List containing noise (fixed) values for squat depth depending of the privacy level
                                      // Room size
     private float room_width;                // value to protect 
     private float room_length;               // value to protect 
-    private List<float> room_width_noises;   // List containing noise (fixed) values for squat depth depending of the privacy level
-    private List<float> room_length_noises;  // List containing noise (fixed) values for squat depth depending of the privacy level
     private float room_center_x;             // the x coord of the room's center            
     private float room_center_z;             // the z coord of the room's center            
-                                            // The privcay level adjusts the differential privacy parameter epsilon
+                                             // The privcay level adjusts the differential privacy parameter epsilon
+
+    // Noise values for each attribute depending on privacy level
+    private List<float> height_noises = new List<float>();
+    private List<float> arm_noises = new List<float>();
+    private List<float> squat_depth_noises = new List<float>();
+    private List<float> room_width_noises = new List<float>();
+    private List<float> room_length_noises = new List<float>();
+    private List<float> ipd_noises = new List<float>();
+
     // DP bounds for each attribute
     private float room_lower = 0f;
     private float room_upper = 5f;
@@ -84,7 +87,7 @@ public class MetaGuard : MonoBehaviour {
     private float[] squat_depth_epsilons = { 1f, 3f, 5f };
     private float[] arm_epsilons = { 1f, 3f, 5f };
 
-    private int privacy_level = 0;               // (UI) Default value in the slide bar. The privacy level chosen by the user. It acts as an index for the lists of epilons and noises that are saved in an array
+    private int privacy_level = 2;               // (UI) Default value in the slide bar. The privacy level chosen by the user. It acts as an index for the lists of epilons and noises that are saved in an array
     private int privacy_levels = 3;              // Number of privacy levels
 
     //// Differential privacy function implmentation
@@ -198,6 +201,7 @@ public class MetaGuard : MonoBehaviour {
         squat_depth_toggle = !(UI.masterToggle && UI.squatDepthToggle);
         ipd_toggle = !(UI.masterToggle && UI.ipdToggle);
         master_toggle = !UI.masterToggle;
+        privacy_level = UI.privacyLevel - 1;
 
         // It is only executed once. It calculates all the noisy values at all privacy levels for all attributes 
         if (!master_toggle && !one_time) {
@@ -218,9 +222,10 @@ public class MetaGuard : MonoBehaviour {
                 room_width_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_width / 2f, room_upper, room_lower)) / (room_width / 2.0f));
                 room_length_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_length / 2f, room_upper, room_lower)) / (room_length / 2.0f));
             }
-            // The default privacy level is medium at the start
-            privacy_level = privacy_levels / 2;
+            privacy_level = 1;
             one_time = true;
+        } else if (master_toggle && one_time) {
+            one_time = false;
         }
 
         // Protections on the X and Z axis 
@@ -282,7 +287,5 @@ public class MetaGuard : MonoBehaviour {
                 LeftControllerOffset.transform.localPosition = new Vector3(LeftControllerOffset.transform.localPosition.x, 0f, LeftControllerOffset.transform.localPosition.z);
             }
         }
-        // Debug.Log("right controller "+RightControllerOffset.transform.localPosition);
-        // Debug.Log("headset "+CameraOffset.transform.localPosition);
     }
 }
