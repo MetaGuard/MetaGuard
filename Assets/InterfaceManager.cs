@@ -56,7 +56,7 @@ public class InterfaceManager : MonoBehaviour {
                 CloseMenu();
             } else {
                 PositionMenu();
-                VRUIMenuObject.SetActive(true);
+                LeftLaser.SetActive(true);
             }
         }
 
