@@ -1,0 +1,288 @@
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using UnityEngine;
+using UnityEngine.XR;
+using System;
+using rand = UnityEngine.Random;
+using Valve.VR;
+
+public class MetaGuard : MonoBehaviour {
+    public InterfaceManager UI;
+    public GameObject CameraOffset;
+    public GameObject MainCamera;
+    public GameObject LeftController;
+    public GameObject RightController;
+    public GameObject RightControllerOffset;
+    public GameObject LeftControllerOffset;
+
+    // public GameObject CameraOffsetRightEye;
+    // public GameObject CameraOffsetLeftEye;
+    // public Camera XRCamera;
+    // public Camera RightXRCamera;
+    // public Camera LeftXRCamera;
+
+    private Vector3 leftControllerPos;
+    private Vector3 rightControllerPos;
+    private Valve.VR.SteamVR_PlayArea.Size size;
+
+    private bool one_time = false;                   // Initiated as false (later). The noise calculation must be done once, otherwise, repeated calculations will average out the noise
+    private bool toggle_all = false;                 // (UI) Boolean to switch all protections on and off. false then all protections are on.!!!
+    private float y_offset = 0.107f;                  // Each headset has a height offset
+    private float x_z_offset = 0.02f;                // idem
+                                                    // Height
+    private float height;                    // Value to protect. The relative y_corrdinate (later assigned), it is an accurate measurement of user height
+    private List<float> height_noises;       // List containing noise (fixed) values for height depending of the privacy level
+                                            // Arm length (wingspan)
+    private float arm_length;                // value to protect 
+    private List<float> arm_noises;          // List containing noise (fixed) values for wingspan depending of the privacy level
+    private float height_to_wingspan_ratio = 1.04f;  // convertion ratio from height to wingspan
+                                                    // Depth
+    private float fitness_threshold = 0.25f;
+    private float squat_depth;                // value to protect 
+    private List<float> squat_depth_noises;   // List containing noise (fixed) values for squat depth depending of the privacy level
+                                             // Interpupillary distance (IPD)
+    private float ipd;                // value to protect 
+    private List<float> ipd_noises;   // List containing noise (fixed) values for squat depth depending of the privacy level
+                                     // Room size
+    private float room_width;                // value to protect 
+    private float room_length;               // value to protect 
+    private List<float> room_width_noises;   // List containing noise (fixed) values for squat depth depending of the privacy level
+    private List<float> room_length_noises;  // List containing noise (fixed) values for squat depth depending of the privacy level
+    private float room_center_x;             // the x coord of the room's center            
+    private float room_center_z;             // the z coord of the room's center            
+                                            // The privcay level adjusts the differential privacy parameter epsilon
+    // DP bounds for each attribute
+    private float room_lower = 0f;
+    private float room_upper = 5f;
+    private float room_sensitivity;          // the sensitivity of the squat depth in differential privacy
+    private float squat_depth_lower = 0f;          // the lower bound of user squat depth
+    private float squat_depth_upper;          // the upper bound of user squat depth
+    private float squat_depth_sensitivity;    // the sensitivity of the squat depth in differential privacy
+    private float height_lower = 1.45f;              // the lower bound of user height
+    private float height_upper = 1.85f;              // the upper bound of user height
+    private float height_sensitivity;        // the sensitivity of the height in differential privacy
+    private float arm_lower;                 // the lower bound of user wingspan
+    private float arm_upper;
+    private float arm_sensitivity;
+    private float ipd_lower = 0.057f;
+    private float ipd_upper = 0.067f;
+    private float ipd_sensitivity;
+
+    // Toggle values for each attribute, true = off for some reason
+    private bool room_toggle = true;
+    private bool height_toggle = true;
+    private bool ipd_toggle = true;
+    private bool squat_depth_toggle = true;
+    private bool arm_toggle = true;
+    private bool master_toggle = true;
+
+    // Epsilon values for each attribute
+    private float[] height_epsilons = { 1f, 3f, 5f };
+    private float[] room_epsilons = { 1f, 3f, 5f };
+    private float[] ipd_epsilons = { 1f, 3f, 5f };
+    private float[] squat_depth_epsilons = { 1f, 3f, 5f };
+    private float[] arm_epsilons = { 1f, 3f, 5f };
+
+    private int privacy_level = 0;               // (UI) Default value in the slide bar. The privacy level chosen by the user. It acts as an index for the lists of epilons and noises that are saved in an array
+    private int privacy_levels = 3;              // Number of privacy levels
+
+    //// Differential privacy function implmentation
+    //// Adapted from laplace bounded domain of IBM's diffprivlib (for more details on the implementation): 
+    //// https://github.com/IBM/differential-privacy-library/blob/main/diffprivlib/mechanisms/laplace.py
+    // Clamps values so that we do not have extreme outputs 
+    float Clamp(float value, float lower, float upper) {
+        return Math.Max(lower, Math.Min(value, upper));
+    }
+
+    float _delta_c(float shape, float delta_q, float diam) {
+        if (shape == 0) {
+            return 2.0f;
+        }
+        return (2 - (float)Math.Exp(-delta_q / shape) - (float)Math.Exp(-(diam - delta_q) / shape)) / (1 - (float)Math.Exp(-diam / shape));
+    }
+
+    float _f(float shape, float delta_q, float eps, float delta, float diam) {
+        return delta_q / (eps - (float)Math.Log(_delta_c(shape, delta_q, diam)) - (float)Math.Log(1 - delta));
+    }
+
+    // Samples from a Laplace distribution in a way that avoids floating point vulnerability
+    float _laplace_sampler(float unif1, float unif2, float unif3, float unif4) {
+
+        return (float)Math.Log(1 - unif1) * (float)Math.Cos((float)Math.PI * unif2) + (float)Math.Log(1 - unif3) * (float)Math.Cos((float)Math.PI * unif4);
+    }
+
+    // Main function to generate a differentially private noisy value
+    float LDPNoise(float[] epsilons, float sensitivity, float value, float upper, float lower) {
+        // Calculates the new scale of the noise distribution, as we onlzy consider an interval
+        float eps = epsilons[privacy_level];
+        float delta = 0;
+        float diam = Math.Abs(upper - lower);
+        float delta_q = sensitivity;
+        float left = delta_q / (eps - (float)Math.Log(1 - delta));
+        float right = _f(left, delta_q, eps, delta, diam);
+        float old_interval_size = (right - left) * 2;
+
+        while (old_interval_size > right - left) {
+
+            old_interval_size = right - left;
+            float middle = (right + left) / 2;
+
+            if (_f(middle, delta_q, eps, delta, diam) >= middle) {
+                left = middle;
+            }
+            if (_f(middle, delta_q, eps, delta, diam) <= middle) {
+                right = middle;
+            }
+        }
+
+        float scale = (right + left) / 2;
+
+        // Clamping the input value
+        value = Clamp(value, lower, upper);
+
+        // Randomization
+        int samples = 1;
+        while (true) {
+            bool res = false;
+            float max_noise = int.MinValue;
+            float temp_noise;
+            // We will loop until we get the noise value that is within the interval and, when more than one sample is produced, we pick the max noise 
+            for (int i = 0; i < samples; i++) {
+                temp_noise = value + scale * _laplace_sampler(rand.value, rand.value, rand.value, rand.value);
+                if (temp_noise >= max_noise && temp_noise >= lower && temp_noise <= upper) {
+                    max_noise = temp_noise;
+                    res = true;
+                }
+            }
+            if (res) {
+                return max_noise;
+            }
+            // This is done so that we do not need to fix the number of iterations and it can adapt when the interval is small
+            samples = (int)Math.Min(100000, samples * 2);
+        }
+    }
+
+    void GetVRRoomSize() {
+        var rect = new Valve.VR.HmdQuad_t();
+        Valve.VR.SteamVR_PlayArea.GetBounds(size, ref rect);
+        // Guide: x=v0, y=v1, z=2. Corner0=bottom right, Corner1=bottom left, Corner2=top left, Corner3=top right
+        room_width = Math.Abs(rect.vCorners1.v0 - rect.vCorners0.v0);
+        room_length = Math.Abs(rect.vCorners2.v2 - rect.vCorners1.v2);
+        // center = left + width/2
+        room_center_x = rect.vCorners1.v0 + room_width / 2f;
+        // center = left + length/2
+        room_center_x = rect.vCorners1.v2 + room_length / 2f;
+    }
+
+    void Start() {
+        height_sensitivity = Math.Abs(height_upper - height_lower);
+        arm_lower = height_lower * height_to_wingspan_ratio / 2.0f;
+        arm_upper = height_upper * height_to_wingspan_ratio / 2.0f;
+        arm_sensitivity = Math.Abs(arm_upper - arm_lower);
+        squat_depth_upper = arm_upper * (1 - fitness_threshold);
+        squat_depth_sensitivity = Math.Abs(squat_depth_upper - squat_depth_lower);
+        ipd_sensitivity = Math.Abs(ipd_upper - ipd_lower);
+        room_sensitivity = Math.Abs(room_upper - room_lower);
+        GetVRRoomSize();
+        height_lower -= y_offset;
+        height_upper -= y_offset;
+        arm_lower -= x_z_offset;
+        arm_upper -= x_z_offset;
+    }
+
+    void Update() {
+        height_toggle = !(UI.masterToggle && UI.heightToggle);
+        arm_toggle = !(UI.masterToggle && UI.armLengthsToggle);
+        room_toggle = !(UI.masterToggle && UI.roomSizeToggle);
+        squat_depth_toggle = !(UI.masterToggle && UI.squatDepthToggle);
+        ipd_toggle = !(UI.masterToggle && UI.ipdToggle);
+        master_toggle = !UI.masterToggle;
+
+        // It is only executed once. It calculates all the noisy values at all privacy levels for all attributes 
+        if (!master_toggle && !one_time) {
+            height = MainCamera.transform.localPosition[1];
+            arm_length = height * height_to_wingspan_ratio / 2.0f;
+            squat_depth = height * (1 - fitness_threshold);
+            Vector3 leftEye = UnityEngine.XR.InputTracking.GetLocalPosition(UnityEngine.XR.XRNode.LeftEye);
+            Vector3 rightEye = UnityEngine.XR.InputTracking.GetLocalPosition(UnityEngine.XR.XRNode.RightEye);
+            ipd = Vector3.Distance(leftEye, rightEye);
+            // The loop calculates all the differentially private noisy measurements for all sensitive attributes
+            for (int i = 0; i < privacy_levels; i++) {
+                // This lobal variable will change and with it the epsilon of the noise distributions
+                privacy_level = i;
+                height_noises.Add(LDPNoise(height_epsilons, height_sensitivity, height, height_upper, height_lower) - height);
+                arm_noises.Add(LDPNoise(arm_epsilons, arm_sensitivity, arm_length, arm_upper, arm_lower) / arm_length);
+                squat_depth_noises.Add(LDPNoise(squat_depth_epsilons, squat_depth_sensitivity, squat_depth, squat_depth_upper, squat_depth_lower) / squat_depth);
+                ipd_noises.Add(LDPNoise(ipd_epsilons, ipd_sensitivity, ipd, ipd_upper, ipd_lower));
+                room_width_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_width / 2f, room_upper, room_lower)) / (room_width / 2.0f));
+                room_length_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_length / 2f, room_upper, room_lower)) / (room_length / 2.0f));
+            }
+            // The default privacy level is medium at the start
+            privacy_level = privacy_levels / 2;
+            one_time = true;
+        }
+
+        // Protections on the X and Z axis 
+        if (one_time && !arm_toggle) {
+            float half_distance_between_controllers = Vector3.Distance(RightController.transform.position, LeftController.transform.position) / 2.0f;
+            Vector3 direction_of_a_controller = RightController.transform.position - LeftController.transform.position;
+            float angle_between_controllers = Mathf.Atan2(direction_of_a_controller.z, direction_of_a_controller.x);
+            float coord_offset = half_distance_between_controllers * (arm_noises[privacy_level] - 1);
+            float controller_offset_x = coord_offset * (float)Math.Cos(angle_between_controllers);
+            float controller_offset_z = coord_offset * (float)Math.Sin(angle_between_controllers);
+            if (!room_toggle) {
+                float headset_room_offset_x = MainCamera.transform.localPosition.x - (room_center_x + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.x - room_center_x));
+                float headset_room_offset_z = MainCamera.transform.localPosition.z - (room_center_z + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.z - room_center_z));
+                CameraOffset.transform.localPosition = new Vector3(headset_room_offset_x, CameraOffset.transform.localPosition.y, headset_room_offset_z);
+                RightControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x + controller_offset_x, RightControllerOffset.transform.localPosition.y, headset_room_offset_z + controller_offset_z);
+                LeftControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x + -controller_offset_x, LeftControllerOffset.transform.localPosition.y, headset_room_offset_z - controller_offset_z);
+            } else {
+                CameraOffset.transform.localPosition = new Vector3(0f, CameraOffset.transform.localPosition.y, 0f);
+                RightControllerOffset.transform.localPosition = new Vector3(controller_offset_x, RightControllerOffset.transform.localPosition.y, controller_offset_z);
+                LeftControllerOffset.transform.localPosition = new Vector3(-controller_offset_x, LeftControllerOffset.transform.localPosition.y, -controller_offset_z);
+            }
+        }
+        if (one_time && arm_toggle) {
+            if (!room_toggle) {
+                float headset_room_offset_x = MainCamera.transform.localPosition.x - (room_center_x + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.x - room_center_x));
+                float headset_room_offset_z = MainCamera.transform.localPosition.z - (room_center_z + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.z - room_center_z));
+                CameraOffset.transform.localPosition = new Vector3(headset_room_offset_x, CameraOffset.transform.localPosition.y, headset_room_offset_z);
+                RightControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x, RightControllerOffset.transform.localPosition.y, headset_room_offset_z);
+                LeftControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x, LeftControllerOffset.transform.localPosition.y, headset_room_offset_z);
+            } else {
+                CameraOffset.transform.localPosition = new Vector3(0f, CameraOffset.transform.localPosition.y, 0f);
+                RightControllerOffset.transform.localPosition = new Vector3(0, RightControllerOffset.transform.localPosition.y, 0);
+                LeftControllerOffset.transform.localPosition = new Vector3(0, LeftControllerOffset.transform.localPosition.y, 0);
+            }
+        }
+
+        // Protections on the Y axis
+        if (one_time && !squat_depth_toggle) {
+            if (!height_toggle) {
+                float temp_y_offset = MainCamera.transform.localPosition.y - ((height + height_noises[privacy_level]) - (height - MainCamera.transform.localPosition.y) * squat_depth_noises[privacy_level]);
+                CameraOffset.transform.localPosition = new Vector3(CameraOffset.transform.localPosition.x, temp_y_offset, CameraOffset.transform.localPosition.z);
+                RightControllerOffset.transform.localPosition = new Vector3(RightControllerOffset.transform.localPosition.x, temp_y_offset, RightControllerOffset.transform.localPosition.z);
+                LeftControllerOffset.transform.localPosition = new Vector3(LeftControllerOffset.transform.localPosition.x, temp_y_offset, LeftControllerOffset.transform.localPosition.z);
+            } else {
+                float temp_y_offset = MainCamera.transform.localPosition.y - ((height) - (height - MainCamera.transform.localPosition.y) * squat_depth_noises[privacy_level]);
+                CameraOffset.transform.localPosition = new Vector3(CameraOffset.transform.localPosition.x, temp_y_offset, CameraOffset.transform.localPosition.z);
+                RightControllerOffset.transform.localPosition = new Vector3(RightControllerOffset.transform.localPosition.x, temp_y_offset, RightControllerOffset.transform.localPosition.z);
+                LeftControllerOffset.transform.localPosition = new Vector3(LeftControllerOffset.transform.localPosition.x, temp_y_offset, LeftControllerOffset.transform.localPosition.z);
+            }
+        }
+        if (one_time && squat_depth_toggle) {
+            if (!height_toggle) {
+                CameraOffset.transform.localPosition = new Vector3(CameraOffset.transform.localPosition.x, height_noises[privacy_level], CameraOffset.transform.localPosition.z);
+                RightControllerOffset.transform.localPosition = new Vector3(RightControllerOffset.transform.localPosition.x, height_noises[privacy_level], RightControllerOffset.transform.localPosition.z);
+                LeftControllerOffset.transform.localPosition = new Vector3(LeftControllerOffset.transform.localPosition.x, height_noises[privacy_level], LeftControllerOffset.transform.localPosition.z);
+            } else {
+                CameraOffset.transform.localPosition = new Vector3(CameraOffset.transform.localPosition.x, 0f, CameraOffset.transform.localPosition.z);
+                RightControllerOffset.transform.localPosition = new Vector3(RightControllerOffset.transform.localPosition.x, 0f, RightControllerOffset.transform.localPosition.z);
+                LeftControllerOffset.transform.localPosition = new Vector3(LeftControllerOffset.transform.localPosition.x, 0f, LeftControllerOffset.transform.localPosition.z);
+            }
+        }
+        // Debug.Log("right controller "+RightControllerOffset.transform.localPosition);
+        // Debug.Log("headset "+CameraOffset.transform.localPosition);
+    }
+}

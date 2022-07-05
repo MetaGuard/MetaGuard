@@ -3,7 +3,21 @@
 --- !u!78 &1
 TagManager:
   serializedVersion: 2
-  tags: []
+  tags:
+  - VRUIBackground
+  - VRUIText
+  - VRUIToggle
+  - VRUIOutline
+  - VRUISlider
+  - VRUIButtonIcon
+  - VRUIIcon
+  - VRUIAccent
+  - VRUIButton
+  - VRUIButtonTab
+  - VRUIButtonControlBar
+  - VRUIButtonList
+  - VRUICheckbox
+  - VRUIRadio
   layers:
   - Default
   - TransparentFX
