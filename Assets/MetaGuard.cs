@@ -321,5 +321,12 @@ public class MetaGuard : MonoBehaviour {
                 LeftControllerOffset.transform.localPosition = new Vector3(LeftControllerOffset.transform.localPosition.x, 0f, LeftControllerOffset.transform.localPosition.z);
             }
         }
+
+        // IPD Protections
+        if (one_time && !ipd_toggle) {
+            MainCamera.transform.localScale = new Vector3(ipd_noises[privacy_level] / ipd, 0f, 0f);
+        } else {
+            MainCamera.transform.localScale = new Vector3(0f, 0f, 0f);
+        }
     }
 }
