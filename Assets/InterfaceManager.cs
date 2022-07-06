@@ -40,6 +40,9 @@ public class InterfaceManager : MonoBehaviour {
 
         // Place floor below player
         VRUIFloorObject.transform.SetParent(XRRig.transform);
+
+        // Deactivate all by default
+        CloseMenu();
     }
 
     // Update is called once per frame
