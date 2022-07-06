@@ -15,6 +15,7 @@ public class MetaGuard : MonoBehaviour {
     public GameObject RightController;
     public GameObject RightControllerOffset;
     public GameObject LeftControllerOffset;
+    public GameObject World;
     // public GameObject CameraOffsetRightEye;
     // public GameObject CameraOffsetLeftEye;
     // public Camera XRCamera;
@@ -92,6 +93,7 @@ public class MetaGuard : MonoBehaviour {
     private bool arm_toggle = true;
     private bool master_toggle = true;
     private bool wingspan_toggle = true;
+    private bool handedness_toggle = true;
 
     // Epsilon values for each attribute
     private float[] height_epsilons = { 1f, 3f, 5f };
@@ -218,6 +220,8 @@ public class MetaGuard : MonoBehaviour {
         wingspan_toggle = !(UI.masterToggle && UI.wingspanToggle);
         squat_depth_toggle = !(UI.masterToggle && UI.squatDepthToggle);
         ipd_toggle = !(UI.masterToggle && UI.ipdToggle);
+        handedness_toggle = !(UI.masterToggle && UI.handednessToggle);
+
         master_toggle = !UI.masterToggle;
         privacy_level = UI.privacyLevel - 1;
 
@@ -327,6 +331,13 @@ public class MetaGuard : MonoBehaviour {
             MainCamera.transform.localScale = new Vector3(ipd_noises[privacy_level] / ipd, 0f, 0f);
         } else {
             MainCamera.transform.localScale = new Vector3(0f, 0f, 0f);
+        }
+
+        // Handedness protections
+        if (one_time && !handedness_toggle) {
+            World.transform.localScale = new Vector3(-1f, 1f, 1f);
+        } else {
+            World.transform.localScale = new Vector3(1f, 1f, 1f);
         }
     }
 }
