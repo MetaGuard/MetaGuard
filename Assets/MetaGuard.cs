@@ -61,6 +61,7 @@ public class MetaGuard : MonoBehaviour {
     private List<float> room_width_noises = new List<float>();
     private List<float> room_length_noises = new List<float>();
     private List<float> ipd_noises = new List<float>();
+    private List<bool> handedness_rand = new List<bool>();
 
     // DP bounds for each attribute
     private float room_lower = 0f;
@@ -252,6 +253,7 @@ public class MetaGuard : MonoBehaviour {
                 ipd_noises.Add(LDPNoise(ipd_epsilons, ipd_sensitivity, ipd, ipd_upper, ipd_lower));
                 room_width_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_width / 2f, room_upper, room_lower)) / (room_width / 2.0f));
                 room_length_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_length / 2f, room_upper, room_lower)) / (room_length / 2.0f));
+                handedness_rand.Add(false);
             }
             privacy_level = 1;
             one_time = true;
@@ -334,7 +336,7 @@ public class MetaGuard : MonoBehaviour {
         }
 
         // Handedness protections
-        if (one_time && !handedness_toggle) {
+        if (one_time && !handedness_toggle && handedness_rand[privacy_level]) {
             World.transform.localScale = new Vector3(-1f, 1f, 1f);
         } else {
             World.transform.localScale = new Vector3(1f, 1f, 1f);
