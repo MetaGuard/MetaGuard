@@ -15,7 +15,6 @@ public class MetaGuard : MonoBehaviour {
     public GameObject RightController;
     public GameObject RightControllerOffset;
     public GameObject LeftControllerOffset;
-
     // public GameObject CameraOffsetRightEye;
     // public GameObject CameraOffsetLeftEye;
     // public Camera XRCamera;
@@ -26,30 +25,37 @@ public class MetaGuard : MonoBehaviour {
     private Vector3 rightControllerPos;
     private Valve.VR.SteamVR_PlayArea.Size size;
 
-    private bool one_time = false;                   // Initiated as false (later). The noise calculation must be done once, otherwise, repeated calculations will average out the noise
-    private bool toggle_all = false;                 // (UI) Boolean to switch all protections on and off. false then all protections are on.!!!
-    private float y_offset = 0.107f;                  // Each headset has a height offset
-    private float x_z_offset = 0.02f;                // idem
-                                                    // Height
-    private float height;                    // Value to protect. The relative y_corrdinate (later assigned), it is an accurate measurement of user height
-                                            // Arm length (wingspan)
-    private float arm_length;                // value to protect 
-    private float height_to_wingspan_ratio = 1.04f;  // convertion ratio from height to wingspan
-                                                    // Depth
-    private float fitness_threshold = 0.25f;
-    private float squat_depth;                // value to protect 
-                                             // Interpupillary distance (IPD)
-    private float ipd;                // value to protect 
-                                     // Room size
-    private float room_width;                // value to protect 
-    private float room_length;               // value to protect 
-    private float room_center_x;             // the x coord of the room's center            
-    private float room_center_z;             // the z coord of the room's center            
-                                             // The privcay level adjusts the differential privacy parameter epsilon
+    // Controls initiating and toling off and on the protections
+    private bool one_time = false;
+    private bool toggle_all = false;
+
+    // average device offset (across HTC Vive, Vive Pro 2, and Oculus Quest 2)
+    private float y_offset = 0.107f;
+
+    // Conversion ratios
+    private float height_to_wingspan_ratio = 1.04f;
+    private float fitness_threshold = 0.5f;
+
+    // Attributes to protect
+    private float height;
+    private float arm_length_ratio;
+    private float wingspan;
+    private float squat_depth;
+    private float ipd;
+    private float room_width;
+    private float room_length;
+
+    // Required for protection logic
+    private float room_center_x;
+    private float room_center_z;
 
     // Noise values for each attribute depending on privacy level
     private List<float> height_noises = new List<float>();
-    private List<float> arm_noises = new List<float>();
+    private List<float> right_arm_noises = new List<float>();
+    private List<float> left_arm_noises = new List<float>();
+    private List<float> wingspan_right_arm_noises = new List<float>();
+    private List<float> wingspan_left_arm_noises = new List<float>();
+    private List<float> wingspan_noises = new List<float>();
     private List<float> squat_depth_noises = new List<float>();
     private List<float> room_width_noises = new List<float>();
     private List<float> room_length_noises = new List<float>();
@@ -58,18 +64,24 @@ public class MetaGuard : MonoBehaviour {
     // DP bounds for each attribute
     private float room_lower = 0f;
     private float room_upper = 5f;
-    private float room_sensitivity;          // the sensitivity of the squat depth in differential privacy
-    private float squat_depth_lower = 0f;          // the lower bound of user squat depth
-    private float squat_depth_upper;          // the upper bound of user squat depth
-    private float squat_depth_sensitivity;    // the sensitivity of the squat depth in differential privacy
-    private float height_lower = 1.45f;              // the lower bound of user height
-    private float height_upper = 1.85f;              // the upper bound of user height
-    private float height_sensitivity;        // the sensitivity of the height in differential privacy
-    private float arm_lower;                 // the lower bound of user wingspan
-    private float arm_upper;
-    private float arm_sensitivity;
-    private float ipd_lower = 0.057f;
-    private float ipd_upper = 0.067f;
+    private float room_sensitivity;
+    private float height_lower = 1.496f;
+    private float height_upper = 1.826f;
+    private float height_sensitivity;
+    private float squat_depth_lower = 0f;
+    private float squat_depth_upper;
+    private float squat_depth_sensitivity;
+    private float arm_ratio_lower = 0.95f;
+    private float arm_ratio_upper = 1.05f;
+    private float arm_ratio_sensitivity;
+    private float wingspan_lower;
+    private float wingspan_upper;
+    private float wingspan_sensitivity;
+    private float arm_length_lower = 0.663f;
+    private float arm_length_upper = 0.853f;
+    private float arm_length_sensitivity;
+    private float ipd_lower = 0.0557f;
+    private float ipd_upper = 0.0710f;
     private float ipd_sensitivity;
 
     // Toggle values for each attribute, true = off for some reason
@@ -79,16 +91,18 @@ public class MetaGuard : MonoBehaviour {
     private bool squat_depth_toggle = true;
     private bool arm_toggle = true;
     private bool master_toggle = true;
+    private bool wingspan_toggle = true;
 
     // Epsilon values for each attribute
     private float[] height_epsilons = { 1f, 3f, 5f };
-    private float[] room_epsilons = { 1f, 3f, 5f };
+    private float[] room_epsilons = { 0.1f, 1f, 3f };
     private float[] ipd_epsilons = { 1f, 3f, 5f };
     private float[] squat_depth_epsilons = { 1f, 3f, 5f };
-    private float[] arm_epsilons = { 1f, 3f, 5f };
+    private float[] arm_epsilons = { 0.5f, 1f, 3f };
 
-    private int privacy_level = 2;               // (UI) Default value in the slide bar. The privacy level chosen by the user. It acts as an index for the lists of epilons and noises that are saved in an array
-    private int privacy_levels = 3;              // Number of privacy levels
+    // The privacy level chosen by the user. It acts as an index for the lists of epilons and noises
+    private int privacy_level = 2;
+    private int privacy_levels = 3;
 
     //// Differential privacy function implmentation
     //// Adapted from laplace bounded domain of IBM's diffprivlib (for more details on the implementation): 
@@ -150,7 +164,7 @@ public class MetaGuard : MonoBehaviour {
             bool res = false;
             float max_noise = int.MinValue;
             float temp_noise;
-            // We will loop until we get the noise value that is within the interval and, when more than one sample is produced, we pick the max noise 
+            // Loop until we get the noise value that is within the interval and, when more than one sample is produced, pick the max noise 
             for (int i = 0; i < samples; i++) {
                 temp_noise = value + scale * _laplace_sampler(rand.value, rand.value, rand.value, rand.value);
                 if (temp_noise >= max_noise && temp_noise >= lower && temp_noise <= upper) {
@@ -161,7 +175,7 @@ public class MetaGuard : MonoBehaviour {
             if (res) {
                 return max_noise;
             }
-            // This is done so that we do not need to fix the number of iterations and it can adapt when the interval is small
+            // This is done so that we do not need to fix the number of iterations and it can adapt when the interval is small, i.e., it needs more samples to succeed
             samples = (int)Math.Min(100000, samples * 2);
         }
     }
@@ -179,25 +193,29 @@ public class MetaGuard : MonoBehaviour {
     }
 
     void Start() {
-        height_sensitivity = Math.Abs(height_upper - height_lower);
-        arm_lower = height_lower * height_to_wingspan_ratio / 2.0f;
-        arm_upper = height_upper * height_to_wingspan_ratio / 2.0f;
-        arm_sensitivity = Math.Abs(arm_upper - arm_lower);
-        squat_depth_upper = arm_upper * (1 - fitness_threshold);
-        squat_depth_sensitivity = Math.Abs(squat_depth_upper - squat_depth_lower);
-        ipd_sensitivity = Math.Abs(ipd_upper - ipd_lower);
-        room_sensitivity = Math.Abs(room_upper - room_lower);
+        // offset the y coor attributes
         GetVRRoomSize();
         height_lower -= y_offset;
         height_upper -= y_offset;
-        arm_lower -= x_z_offset;
-        arm_upper -= x_z_offset;
+        // Initialize remaining bounds 
+        squat_depth_upper = height_upper * (1 - fitness_threshold);
+        wingspan_lower = height_to_wingspan_ratio * height_lower;
+        wingspan_upper = height_to_wingspan_ratio * height_upper;
+        // Initialize sensitivities
+        height_sensitivity = Math.Abs(height_upper - height_lower);
+        arm_ratio_sensitivity = Math.Abs(arm_ratio_upper - arm_ratio_lower);
+        squat_depth_sensitivity = Math.Abs(squat_depth_upper - squat_depth_lower);
+        ipd_sensitivity = Math.Abs(ipd_upper - ipd_lower);
+        room_sensitivity = Math.Abs(room_upper - room_lower);
+        wingspan_sensitivity = Math.Abs(wingspan_upper - wingspan_lower);
+        arm_length_sensitivity = Math.Abs(arm_length_upper - arm_length_lower);
     }
 
     void Update() {
         height_toggle = !(UI.masterToggle && UI.heightToggle);
         arm_toggle = !(UI.masterToggle && UI.armLengthsToggle);
         room_toggle = !(UI.masterToggle && UI.roomSizeToggle);
+        wingspan_toggle = !(UI.masterToggle && UI.wingspanToggle);
         squat_depth_toggle = !(UI.masterToggle && UI.squatDepthToggle);
         ipd_toggle = !(UI.masterToggle && UI.ipdToggle);
         master_toggle = !UI.masterToggle;
@@ -205,9 +223,12 @@ public class MetaGuard : MonoBehaviour {
 
         // It is only executed once. It calculates all the noisy values at all privacy levels for all attributes 
         if (!master_toggle && !one_time) {
-            height = MainCamera.transform.localPosition[1];
-            arm_length = height * height_to_wingspan_ratio / 2.0f;
+            height = MainCamera.transform.localPosition.y;
             squat_depth = height * (1 - fitness_threshold);
+            float right_arm_length = Vector3.Distance(MainCamera.transform.localPosition, RightController.transform.position);
+            float left_arm_length = Vector3.Distance(MainCamera.transform.localPosition, LeftController.transform.position);
+            arm_length_ratio = right_arm_length / left_arm_length;
+            wingspan = height_to_wingspan_ratio * height;
             Vector3 leftEye = UnityEngine.XR.InputTracking.GetLocalPosition(UnityEngine.XR.XRNode.LeftEye);
             Vector3 rightEye = UnityEngine.XR.InputTracking.GetLocalPosition(UnityEngine.XR.XRNode.RightEye);
             ipd = Vector3.Distance(leftEye, rightEye);
@@ -216,7 +237,13 @@ public class MetaGuard : MonoBehaviour {
                 // This lobal variable will change and with it the epsilon of the noise distributions
                 privacy_level = i;
                 height_noises.Add(LDPNoise(height_epsilons, height_sensitivity, height, height_upper, height_lower) - height);
-                arm_noises.Add(LDPNoise(arm_epsilons, arm_sensitivity, arm_length, arm_upper, arm_lower) / arm_length);
+                float noisy_wingspan = LDPNoise(arm_epsilons, wingspan_sensitivity, wingspan, wingspan_upper, wingspan_lower);
+                float noisy_arm_length_ratio = LDPNoise(arm_epsilons, arm_ratio_sensitivity, arm_length_ratio, arm_ratio_upper, arm_ratio_lower);
+                right_arm_noises.Add(LDPNoise(arm_epsilons, arm_length_sensitivity, right_arm_length, arm_length_upper, arm_length_lower) / right_arm_length);
+                left_arm_noises.Add(LDPNoise(arm_epsilons, arm_length_sensitivity, left_arm_length, arm_length_upper, arm_length_lower) / left_arm_length);
+                wingspan_right_arm_noises.Add((noisy_wingspan / 2) * noisy_arm_length_ratio / right_arm_length);
+                wingspan_left_arm_noises.Add((noisy_wingspan / 2) * (1 / noisy_arm_length_ratio) / left_arm_length);
+                wingspan_noises.Add((noisy_wingspan / wingspan));
                 squat_depth_noises.Add(LDPNoise(squat_depth_epsilons, squat_depth_sensitivity, squat_depth, squat_depth_upper, squat_depth_lower) / squat_depth);
                 ipd_noises.Add(LDPNoise(ipd_epsilons, ipd_sensitivity, ipd, ipd_upper, ipd_lower));
                 room_width_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_width / 2f, room_upper, room_lower)) / (room_width / 2.0f));
@@ -231,27 +258,34 @@ public class MetaGuard : MonoBehaviour {
         // Protections on the X and Z axis 
         if (one_time && !arm_toggle) {
             float half_distance_between_controllers = Vector3.Distance(RightController.transform.position, LeftController.transform.position) / 2.0f;
+            // Right controller
             Vector3 direction_of_a_controller = RightController.transform.position - LeftController.transform.position;
             float angle_between_controllers = Mathf.Atan2(direction_of_a_controller.z, direction_of_a_controller.x);
-            float coord_offset = half_distance_between_controllers * (arm_noises[privacy_level] - 1);
-            float controller_offset_x = coord_offset * (float)Math.Cos(angle_between_controllers);
-            float controller_offset_z = coord_offset * (float)Math.Sin(angle_between_controllers);
+            float coord_offset = half_distance_between_controllers * (right_arm_noises[privacy_level] - 1);
+            float right_controller_offset_x = coord_offset * (float)Math.Cos(angle_between_controllers);
+            float right_controller_offset_z = coord_offset * (float)Math.Sin(angle_between_controllers);
+            // Left controller
+            direction_of_a_controller = LeftController.transform.position - RightController.transform.position;
+            angle_between_controllers = Mathf.Atan2(direction_of_a_controller.z, direction_of_a_controller.x);
+            coord_offset = half_distance_between_controllers * (left_arm_noises[privacy_level] - 1);
+            float left_controller_offset_x = coord_offset * (float)Math.Cos(angle_between_controllers);
+            float left_controller_offset_z = coord_offset * (float)Math.Sin(angle_between_controllers);
             if (!room_toggle) {
                 float headset_room_offset_x = MainCamera.transform.localPosition.x - (room_center_x + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.x - room_center_x));
                 float headset_room_offset_z = MainCamera.transform.localPosition.z - (room_center_z + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.z - room_center_z));
                 CameraOffset.transform.localPosition = new Vector3(headset_room_offset_x, CameraOffset.transform.localPosition.y, headset_room_offset_z);
-                RightControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x + controller_offset_x, RightControllerOffset.transform.localPosition.y, headset_room_offset_z + controller_offset_z);
-                LeftControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x + -controller_offset_x, LeftControllerOffset.transform.localPosition.y, headset_room_offset_z - controller_offset_z);
+                RightControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x + right_controller_offset_x, RightControllerOffset.transform.localPosition.y, headset_room_offset_z + right_controller_offset_z);
+                LeftControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x + left_controller_offset_x, LeftControllerOffset.transform.localPosition.y, headset_room_offset_z + left_controller_offset_x);
             } else {
                 CameraOffset.transform.localPosition = new Vector3(0f, CameraOffset.transform.localPosition.y, 0f);
-                RightControllerOffset.transform.localPosition = new Vector3(controller_offset_x, RightControllerOffset.transform.localPosition.y, controller_offset_z);
-                LeftControllerOffset.transform.localPosition = new Vector3(-controller_offset_x, LeftControllerOffset.transform.localPosition.y, -controller_offset_z);
+                RightControllerOffset.transform.localPosition = new Vector3(right_controller_offset_x, RightControllerOffset.transform.localPosition.y, right_controller_offset_z);
+                LeftControllerOffset.transform.localPosition = new Vector3(left_controller_offset_x, LeftControllerOffset.transform.localPosition.y, left_controller_offset_z);
             }
         }
         if (one_time && arm_toggle) {
             if (!room_toggle) {
-                float headset_room_offset_x = MainCamera.transform.localPosition.x - (room_center_x + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.x - room_center_x));
-                float headset_room_offset_z = MainCamera.transform.localPosition.z - (room_center_z + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.z - room_center_z));
+                float headset_room_offset_x = (room_center_x + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.x - room_center_x)) - MainCamera.transform.localPosition.x;
+                float headset_room_offset_z = (room_center_z + room_width_noises[privacy_level] * (MainCamera.transform.localPosition.z - room_center_z)) - MainCamera.transform.localPosition.z;
                 CameraOffset.transform.localPosition = new Vector3(headset_room_offset_x, CameraOffset.transform.localPosition.y, headset_room_offset_z);
                 RightControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x, RightControllerOffset.transform.localPosition.y, headset_room_offset_z);
                 LeftControllerOffset.transform.localPosition = new Vector3(headset_room_offset_x, LeftControllerOffset.transform.localPosition.y, headset_room_offset_z);
