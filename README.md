@@ -9,5 +9,5 @@ MetaGuard: Using Differential Privacy to go Incognito in the Metaverse
 
 [Release](https://github.com/MetaGuard/MetaGuard/releases) |
 [Main Script](https://github.com/MetaGuard/MetaGuard/blob/main/Assets/MetaGuard.cs) |
-[Developer](https://github.com/VCNinc) |
-[Co-Developer](https://github.com/gonzalo-munillag)
+[Vivek Nair](https://github.com/VCNinc) |
+[Gonzalo Munilla Garrido](https://github.com/gonzalo-munillag)
