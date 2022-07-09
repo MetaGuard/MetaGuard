@@ -54,9 +54,10 @@ public class MetaGuard : MonoBehaviour {
     private List<float> height_noises = new List<float>();
     private List<float> right_arm_noises = new List<float>();
     private List<float> left_arm_noises = new List<float>();
+    private List<float> wingspan_and_right_arm_noises = new List<float>();
+    private List<float> wingspan_and_left_arm_noises = new List<float>();
     private List<float> wingspan_right_arm_noises = new List<float>();
     private List<float> wingspan_left_arm_noises = new List<float>();
-    private List<float> wingspan_noises = new List<float>();
     private List<float> squat_depth_noises = new List<float>();
     private List<float> room_width_noises = new List<float>();
     private List<float> room_length_noises = new List<float>();
@@ -86,22 +87,33 @@ public class MetaGuard : MonoBehaviour {
     private float ipd_upper = 0.0710f;
     private float ipd_sensitivity;
 
-    // Toggle values for each attribute, true = off for some reason
-    private bool room_toggle = true;
+    // Toggle values for each attribute, true = protection off for some reason :D
+    private bool master_toggle = true;
     private bool height_toggle = true;
+    private bool room_toggle = true;
     private bool ipd_toggle = true;
     private bool squat_depth_toggle = true;
-    private bool arm_toggle = true;
-    private bool master_toggle = true;
     private bool wingspan_toggle = true;
+    private bool arm_toggle = true;
     private bool handedness_toggle = true;
+    private bool locality_toggle = true;
+    private bool tracking_rate_toggle = true;
+    private bool reaction_time_togle = true;
+    private bool voice_toggle = true;
+
 
     // Epsilon values for each attribute
     private float[] height_epsilons = { 1f, 3f, 5f };
     private float[] room_epsilons = { 0.1f, 1f, 3f };
     private float[] ipd_epsilons = { 1f, 3f, 5f };
     private float[] squat_depth_epsilons = { 1f, 3f, 5f };
-    private float[] arm_epsilons = { 0.5f, 1f, 3f };
+    private float[] wingspan_epsilons = { 0.5f, 1f, 3f };
+    private float[] arm_epsilons = { 0.1f, 1f, 3f };
+    private float[] handedness_coin_bias = { 0.05f, 0.45f, 0.63f};
+    private float[] locality_clamp_values = { 50f, 30f, 25f };
+    private float[] tracking_rate_clamp_values = { 60f, 72f, 90f };
+    private float[] reaction_time_clamp_values = { 100f, 20f, 10f };
+    private float[] voice_epsilons = { 0.1f, 1f, 6f };
 
     // The privacy level chosen by the user. It acts as an index for the lists of epilons and noises
     private int privacy_level = 2;
@@ -242,18 +254,25 @@ public class MetaGuard : MonoBehaviour {
                 // This lobal variable will change and with it the epsilon of the noise distributions
                 privacy_level = i;
                 height_noises.Add(LDPNoise(height_epsilons, height_sensitivity, height, height_upper, height_lower) - height);
-                float noisy_wingspan = LDPNoise(arm_epsilons, wingspan_sensitivity, wingspan, wingspan_upper, wingspan_lower);
+                float noisy_wingspan = LDPNoise(wingspan_epsilons, wingspan_sensitivity, wingspan, wingspan_upper, wingspan_lower);
                 float noisy_arm_length_ratio = LDPNoise(arm_epsilons, arm_ratio_sensitivity, arm_length_ratio, arm_ratio_upper, arm_ratio_lower);
-                right_arm_noises.Add(LDPNoise(arm_epsilons, arm_length_sensitivity, right_arm_length, arm_length_upper, arm_length_lower) / right_arm_length);
-                left_arm_noises.Add(LDPNoise(arm_epsilons, arm_length_sensitivity, left_arm_length, arm_length_upper, arm_length_lower) / left_arm_length);
-                wingspan_right_arm_noises.Add((noisy_wingspan / 2) * noisy_arm_length_ratio / right_arm_length);
-                wingspan_left_arm_noises.Add((noisy_wingspan / 2) * (1 / noisy_arm_length_ratio) / left_arm_length);
-                wingspan_noises.Add((noisy_wingspan / wingspan));
+                right_arm_noises.Add((wingspan/2) * noisy_arm_length_ratio / right_arm_length);
+                left_arm_noises.Add((wingspan / 2) * (1/noisy_arm_length_ratio) / left_arm_length);
+                wingspan_and_right_arm_noises.Add((noisy_wingspan / 2) * noisy_arm_length_ratio / right_arm_length);
+                wingspan_and_left_arm_noises.Add((noisy_wingspan / 2) * (1 / noisy_arm_length_ratio) / left_arm_length);
+                wingspan_right_arm_noises.Add((noisy_wingspan / wingspan / right_arm_length));
+                wingspan_left_arm_noises.Add((noisy_wingspan / wingspan / left_arm_length));
                 squat_depth_noises.Add(LDPNoise(squat_depth_epsilons, squat_depth_sensitivity, squat_depth, squat_depth_upper, squat_depth_lower) / squat_depth);
                 ipd_noises.Add(LDPNoise(ipd_epsilons, ipd_sensitivity, ipd, ipd_upper, ipd_lower));
                 room_width_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_width / 2f, room_upper, room_lower)) / (room_width / 2.0f));
                 room_length_noises.Add((LDPNoise(room_epsilons, room_sensitivity, room_length / 2f, room_upper, room_lower)) / (room_length / 2.0f));
                 handedness_rand.Add(false);
+                if (rand.value < handedness_coin_bias[i]) {
+                    handedness_rand[i] = true;
+                }
+                else if (rand.value < handedness_coin_bias[i]) {
+                    handedness_rand[i] = true;
+                }
             }
             privacy_level = 1;
             one_time = true;
@@ -262,18 +281,36 @@ public class MetaGuard : MonoBehaviour {
         }
 
         // Protections on the X and Z axis 
-        if (one_time && !arm_toggle) {
+        if (one_time && (!arm_toggle || !wingspan_toggle)) {
             float half_distance_between_controllers = Vector3.Distance(RightController.transform.position, LeftController.transform.position) / 2.0f;
             // Right controller
             Vector3 direction_of_a_controller = RightController.transform.position - LeftController.transform.position;
             float angle_between_controllers = Mathf.Atan2(direction_of_a_controller.z, direction_of_a_controller.x);
-            float coord_offset = half_distance_between_controllers * (right_arm_noises[privacy_level] - 1);
+            float coord_offset = 0f;
+            if (!arm_toggle && !wingspan_toggle) {
+                coord_offset = half_distance_between_controllers * (wingspan_and_right_arm_noises[privacy_level] - 1);
+            }
+            else if (arm_toggle && !wingspan_toggle) {
+                coord_offset = half_distance_between_controllers * (wingspan_right_arm_noises[privacy_level] - 1);
+            } 
+            else if (!arm_toggle && wingspan_toggle) {
+                coord_offset = half_distance_between_controllers * (right_arm_noises[privacy_level] - 1);
+            }
             float right_controller_offset_x = coord_offset * (float)Math.Cos(angle_between_controllers);
             float right_controller_offset_z = coord_offset * (float)Math.Sin(angle_between_controllers);
             // Left controller
             direction_of_a_controller = LeftController.transform.position - RightController.transform.position;
             angle_between_controllers = Mathf.Atan2(direction_of_a_controller.z, direction_of_a_controller.x);
-            coord_offset = half_distance_between_controllers * (left_arm_noises[privacy_level] - 1);
+            if (!arm_toggle && !wingspan_toggle) {
+                coord_offset = half_distance_between_controllers * (wingspan_and_left_arm_noises[privacy_level] - 1);
+            }
+            else if (arm_toggle && !wingspan_toggle) {
+                coord_offset = half_distance_between_controllers * (wingspan_left_arm_noises[privacy_level] - 1);
+            }
+            else if (!arm_toggle && wingspan_toggle)
+            {
+                coord_offset = half_distance_between_controllers * (left_arm_noises[privacy_level] - 1);
+            }
             float left_controller_offset_x = coord_offset * (float)Math.Cos(angle_between_controllers);
             float left_controller_offset_z = coord_offset * (float)Math.Sin(angle_between_controllers);
             if (!room_toggle) {
