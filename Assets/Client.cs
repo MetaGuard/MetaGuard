@@ -10,12 +10,27 @@ public class Client : MonoBehaviour {
     public GameObject right;
     public GameObject center;
     WebSocket ws;
+    float pong = 5f;
 
     // Start is called before the first frame update
     void Start() {
         if (enabled) {
             ws = new WebSocket("ws://localhost:8080");
             ws.Connect();
+            ws.OnMessage += (sender, e) => {
+                float ping = 0f;
+                if (UI.masterToggle && UI.geolocationToggle) {
+                    if (UI.privacyLevel == 1) {
+                        pong = 0.025f - ping;
+                    } else if (UI.privacyLevel == 2) {
+                        pong = 0.030f - ping;
+                    } else if (UI.privacyLevel == 3) {
+                        pong = 0.050f - ping;
+                    }
+                } else {
+                    pong = 0f;
+                }
+            };
             SendTele();
         }
     }
@@ -33,5 +48,11 @@ public class Client : MonoBehaviour {
         }
         Invoke("SendTele", 1f / hz);
         ws.Send(left.transform.position.ToString() + "\n" + right.transform.position.ToString() + "\n" + center.transform.position.ToString());
+        if (pong <= 0f) {
+            pong = 5f;
+            ws.Send("pong");
+        } else {
+            pong -= 1f / hz;
+        }
     }
 }
